@@ -23,23 +23,12 @@ impl Crateio {
 
         res.json::<crate::Crateio>().await
     }
-    pub async fn new_features(&self) -> Option<Vec<String>> {
-        if let Some(version) = self.versions.first() {
-            if let Ok(version) = serde_json::from_value::<Version>(version.clone()) {
-                return version
-                    .features
-                    .map(|features| features.as_object().unwrap().keys().cloned().collect());
-            }
-        }
-        None
+    pub async fn get_last_features(&self) -> Option<Vec<String>> {
+        self.get_features(0).await
     }
-    pub async fn features_by_version(&self, id: u64) -> Option<Vec<String>> {
-        if let Some(features) = self.versions.get(id as usize - 1) {
-            if let Ok(features) = serde_json::from_value::<Version>(features.clone()) {
-                if let Some(features) = features.features {
-                    return Some(features.as_object().unwrap().keys().cloned().collect());
-                }
-            }
+    pub async fn get_features(&self, id: u64) -> Option<Vec<String>> {
+        if let Some(version) = self.get_version(id).await {
+            return version.get_features().await;
         }
         None
     }
@@ -56,7 +45,7 @@ impl Crateio {
         vs
     }
     pub async fn get_version(&self, id: u64) -> Option<Version> {
-        if let Some(value) = self.versions.get(id as usize - 1) {
+        if let Some(value) = self.versions.get(id as usize) {
             if let Ok(version) = serde_json::from_value(value.clone()) {
                 return Some(version);
             }
@@ -108,6 +97,14 @@ pub struct Version {
     pub updated_at: String,
     pub yanked: bool,
 }
+impl Version {
+    pub async fn get_features(&self) -> Option<Vec<String>> {
+        if let Some(features) = &self.features {
+            return Some(features.as_object().unwrap().keys().cloned().collect());
+        }
+        None
+    }
+}
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Author {
     pub avatar: Option<String>,
@@ -129,20 +126,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_new_features() {
+    async fn test_get_last_features() {
         let res = super::Crateio::get("tokio").await.unwrap();
-        let features = res.new_features().await;
-        // println!("{:?}", features);
+        let features = res.get_last_features().await;
+        println!("{:?}", features);
         assert!(features.is_some())
     }
 
     #[tokio::test]
-    async fn test_features_by_version() {
+    async fn test_get_features() {
         let res = super::Crateio::get("tokio").await.unwrap();
-        let features = res.features_by_version(10).await;
+        let features = res.get_features(10).await;
         println!("{:?}", features);
         assert!(features.is_some());
-        let features = res.features_by_version(10000000).await;
+        let features = res.get_features(0).await;
+        println!("{:?}", features);
+        assert!(features.is_some());
+        let features = res.get_features(10000000).await;
         assert!(features.is_none());
     }
 
@@ -164,6 +164,9 @@ mod tests {
     async fn test_get_version() {
         let res = super::Crateio::get("tokio").await.unwrap();
         let version = res.get_version(10).await;
+        println!("{:?}", version);
+        assert!(version.is_some());
+        let version = res.get_version(1).await;
         println!("{:?}", version);
         assert!(version.is_some());
         let version = res.get_version(10000).await;
