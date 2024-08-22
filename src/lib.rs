@@ -1,13 +1,16 @@
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const API_URL: &str = "https://crates.io/api/v1/crates";
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Crateio {
+#[derive(Deserialize, Serialize, Debug)]
+struct Crateio {
     #[serde(rename = "crate")]
-    crate_data: CrateData,
-    versions: Vec<Value>,
+    pub crate_data: CrateData,
+    pub keywords: Option<Vec<Value>>,
+    pub versions: Vec<Value>,
 }
 impl Crateio {
     pub async fn get(name: &str) -> Result<Self, reqwest::Error> {
@@ -20,68 +23,98 @@ impl Crateio {
 
         res.json::<crate::Crateio>().await
     }
-    pub async fn new_features(&self) -> Result<Option<Vec<String>>, serde_json::Error> {
+    pub async fn new_features(&self) -> Option<Vec<String>> {
         if let Some(version) = self.versions.first() {
-            let version: Version = serde_json::from_value(version.clone())?;
-
-            if let Some(features) = version.features {
-                return Ok(Some(
-                    features.as_object().unwrap().keys().cloned().collect(),
-                ));
+            if let Ok(version) = serde_json::from_value::<Version>(version.clone()) {
+                return version
+                    .features
+                    .map(|features| features.as_object().unwrap().keys().cloned().collect());
             }
         }
-
-        Ok(None)
+        None
     }
-    pub async fn features_by_version(
-        &self,
-        id: u64,
-    ) -> Result<Option<Vec<String>>, serde_json::Error> {
+    pub async fn features_by_version(&self, id: u64) -> Option<Vec<String>> {
         if let Some(features) = self.versions.get(id as usize - 1) {
-            let features: Version = serde_json::from_value(features.clone())?;
-            if let Some(features) = features.features {
-                return Ok(Some(
-                    features.as_object().unwrap().keys().cloned().collect(),
-                ));
+            if let Ok(features) = serde_json::from_value::<Version>(features.clone()) {
+                if let Some(features) = features.features {
+                    return Some(features.as_object().unwrap().keys().cloned().collect());
+                }
             }
         }
-        Ok(None)
+        None
     }
     pub async fn get_data(&self) -> &CrateData {
         &self.crate_data
     }
-    pub async fn get_all_versions(&self) -> Result<Vec<Version>, serde_json::Error> {
-        self.versions
-            .iter()
-            .map(|v| serde_json::from_value(v.clone()))
-            .collect::<Result<Vec<Version>, serde_json::Error>>()
-    }
-    pub async fn get_version(&self, id: u64) -> Result<Option<Version>, serde_json::Error> {
-        if let Some(version) = self.versions.get(id as usize - 1) {
-            return Ok(Some(serde_json::from_value(version.clone())?));
+    pub async fn get_all_versions(&self) -> Vec<Version> {
+        let mut vs = vec![];
+        for v in self.versions.iter() {
+            if let Ok(v) = serde_json::from_value::<Version>(v.clone()) {
+                vs.push(v)
+            }
         }
-        Ok(None)
+        vs
+    }
+    pub async fn get_version(&self, id: u64) -> Option<Version> {
+        if let Some(value) = self.versions.get(id as usize - 1) {
+            if let Ok(version) = serde_json::from_value(value.clone()) {
+                return Some(version);
+            }
+        }
+        None
     }
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CrateData {
-    pub name: String,
-    pub categories: Option<Vec<Value>>,
-    pub description: String,
-    pub repository: Option<String>,
-    pub downloads: Option<u64>,
-    pub max_version: Option<String>,
+    categories: Option<Vec<Value>>,
+    pub created_at: String,
+    pub description: Option<String>,
+    pub documentation: Option<String>,
+    pub downloads: u64,
+    pub exact_match: bool,
+    pub homepage: Option<String>,
     pub max_stable_version: Option<String>,
+    pub max_version: Option<String>,
+    pub name: String,
+    pub recent_downloads: u64,
+    pub repository: Option<String>,
+    pub updated_at: String,
+}
+impl CrateData {
+    pub async fn get_categories(&self) -> Option<Vec<String>> {
+        self.categories.as_ref().map(|categories| {
+            categories
+                .iter()
+                .map(|c| serde_json::from_value(c.clone()).unwrap_or(String::new()))
+                .collect()
+        })
+    }
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Version {
     pub checksum: String,
+    #[serde(rename = "crate")]
+    pub crate_name: String,
     pub crate_size: Option<u64>,
     pub created_at: String,
-    pub num: String,
-    pub rust_version: Option<String>,
+    pub downloads: u64,
+    features: Option<Value>,
+    pub has_lib: bool,
+    pub id: u64,
     pub license: Option<String>,
-    pub features: Option<Value>,
+    pub num: String,
+    pub published_by: Author,
+    pub rust_version: Option<String>,
+    pub updated_at: String,
+    pub yanked: bool,
+}
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct Author {
+    pub avatar: Option<String>,
+    pub id: u64,
+    pub login: String,
+    pub name: String,
+    pub url: String,
 }
 
 #[cfg(test)]
@@ -100,7 +133,7 @@ mod tests {
         let res = super::Crateio::get("tokio").await.unwrap();
         let features = res.new_features().await;
         // println!("{:?}", features);
-        assert!(features.is_ok())
+        assert!(features.is_some())
     }
 
     #[tokio::test]
@@ -108,9 +141,9 @@ mod tests {
         let res = super::Crateio::get("tokio").await.unwrap();
         let features = res.features_by_version(10).await;
         println!("{:?}", features);
-        assert!(features.is_ok());
+        assert!(features.is_some());
         let features = res.features_by_version(10000000).await;
-        assert!(features.is_ok() && features.unwrap().is_none());
+        assert!(features.is_none());
     }
 
     #[tokio::test]
@@ -124,16 +157,7 @@ mod tests {
     async fn test_get_all_versions() {
         let res = super::Crateio::get("tokio").await.unwrap();
         let versions = res.get_all_versions().await;
-        println!(
-            "{:?}",
-            versions
-                .as_ref()
-                .unwrap()
-                .iter()
-                .map(|v| v.num.clone())
-                .collect::<Vec<String>>()
-        );
-        assert!(versions.is_ok())
+        assert!(!versions.is_empty());
     }
 
     #[tokio::test]
@@ -141,9 +165,17 @@ mod tests {
         let res = super::Crateio::get("tokio").await.unwrap();
         let version = res.get_version(10).await;
         println!("{:?}", version);
-        assert!(version.is_ok() && version.unwrap().is_some());
+        assert!(version.is_some());
         let version = res.get_version(10000).await;
         println!("{:?}", version);
-        assert!(version.is_ok() && version.unwrap().is_none());
+        assert!(version.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_categories() {
+        let res = super::Crateio::get("tokio").await.unwrap();
+        let cs = res.get_data().await.get_categories().await;
+        assert!(cs.clone().is_some());
+        assert!(cs.unwrap().len() == 2)
     }
 }
