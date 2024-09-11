@@ -6,7 +6,7 @@ use serde_json::Value;
 const API_URL: &str = "https://crates.io/api/v1/crates";
 
 #[derive(Deserialize, Serialize, Debug)]
-struct Crateio {
+pub struct Crateio {
     #[serde(rename = "crate")]
     pub crate_data: CrateData,
     pub keywords: Option<Vec<Value>>,
