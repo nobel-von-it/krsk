@@ -2,7 +2,7 @@
 name = "krsk"
 description = "krsk is very cool tool for crates.io integration"
 license = "MIT"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 
 [dependencies]
